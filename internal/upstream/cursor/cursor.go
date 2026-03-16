@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,8 +85,70 @@ type cursorPart struct {
 }
 
 type cursorSSE struct {
-	Type  string `json:"type"`
-	Delta string `json:"delta"`
+	Type  string          `json:"type"`
+	Delta json.RawMessage `json:"delta"`
+}
+
+func decodeRawJSONString(raw []byte) string {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return string(raw) // Fallback
+	}
+	s := raw[1 : len(raw)-1]
+
+	// Fast path: no escapes
+	hasEscape := false
+	for _, b := range s {
+		if b == '\\' {
+			hasEscape = true
+			break
+		}
+	}
+	if !hasEscape {
+		return string(s)
+	}
+
+	// Slow path: unescape
+	res := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '"':
+				res = append(res, '"')
+			case '\\':
+				res = append(res, '\\')
+			case '/':
+				res = append(res, '/')
+			case 'b':
+				res = append(res, '\b')
+			case 'f':
+				res = append(res, '\f')
+			case 'n':
+				res = append(res, '\n')
+			case 'r':
+				res = append(res, '\r')
+			case 't':
+				res = append(res, '\t')
+			case 'u':
+				if i+5 < len(s) {
+					// parse unicode escape
+					unq, err := strconv.Unquote(`"\u` + string(s[i+2:i+6]) + `"`)
+					if err == nil {
+						res = append(res, []byte(unq)...)
+						i += 5
+						continue
+					}
+				}
+				res = append(res, '\\', 'u') // fallback
+				i++
+			default:
+				res = append(res, '\\', s[i+1])
+			}
+			i++
+		} else {
+			res = append(res, s[i])
+		}
+	}
+	return string(res)
 }
 
 func New(name string, ucfg config.UpstreamConf) (upstream.Upstream, upstream.Capabilities, error) {
@@ -306,9 +369,10 @@ func (c *cursorUpstream) Do(ctx context.Context, req core.CoreRequest) (core.Cor
 						continue
 					}
 					if evt.Type == "text-delta" {
-						iterOut.WriteString(evt.Delta)
-						completeOut.WriteString(evt.Delta)
-						textOut, thinkingOut := fsm.Process(evt.Delta)
+						deltaStr := decodeRawJSONString(evt.Delta)
+						iterOut.WriteString(deltaStr)
+						completeOut.WriteString(deltaStr)
+						textOut, thinkingOut := fsm.Process(deltaStr)
 						if req.StreamChannel != nil {
 							if textOut != "" || thinkingOut != "" {
 								req.StreamChannel <- core.StreamEvent{TextDelta: textOut, ThinkingDelta: thinkingOut}

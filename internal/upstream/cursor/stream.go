@@ -2,7 +2,27 @@ package cursor
 
 import (
 	"strings"
+	"unicode/utf8"
 )
+
+func trimIncompleteUTF8(s string) (valid string, incomplete string) {
+	if len(s) == 0 {
+		return "", ""
+	}
+	for i := len(s) - 1; i >= 0 && i >= len(s)-3; i-- {
+		b := s[i]
+		if b < utf8.RuneSelf {
+			return s, ""
+		}
+		if utf8.RuneStart(b) {
+			if utf8.ValidString(s[i:]) {
+				return s, ""
+			}
+			return s[:i], s[i:]
+		}
+	}
+	return s, ""
+}
 
 type streamExtractFSM struct {
 	buffer     string
@@ -36,8 +56,9 @@ func (f *streamExtractFSM) Process(delta string) (textOut string, thinkingOut st
 				return
 			}
 
-			thinkingOut += f.buffer
-			f.buffer = ""
+			valid, inc := trimIncompleteUTF8(f.buffer)
+			thinkingOut += valid
+			f.buffer = inc
 			return
 		}
 
@@ -72,8 +93,9 @@ func (f *streamExtractFSM) Process(delta string) (textOut string, thinkingOut st
 			return
 		}
 
-		textOut += f.buffer
-		f.buffer = ""
+		valid, inc := trimIncompleteUTF8(f.buffer)
+		textOut += valid
+		f.buffer = inc
 		return
 	}
 }
