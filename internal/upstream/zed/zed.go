@@ -101,6 +101,7 @@ func (z *zedUpstream) ListModels(ctx context.Context) ([]string, error) {
 		return []string{
 			"claude-3-7-sonnet",
 			"claude-sonnet-4-5",
+			"claude-sonnet-4-6",
 			"claude-haiku-4-5",
 			"gpt-5.4-latest",
 			"gpt-5.3-codex",
